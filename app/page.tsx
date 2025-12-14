@@ -101,6 +101,7 @@ export default function Home() {
     people: Person[];
   } | null>(null);
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false);
+  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
 
   /**
    * Initializes and fetches project list from database
@@ -799,10 +800,10 @@ export default function Home() {
             <AccordionItem
               key={project.id}
               value={project.id}
-              className="bg-yellow-50 border-yellow-300"
+              className="border-yellow-300"
             >
               <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center m-auto gap-3">
                   <Loader2 className="h-5 w-5 animate-spin text-yellow-600" />
                   <span className="font-semibold text-yellow-800">
                     {project.name}
@@ -993,34 +994,104 @@ export default function Home() {
           setIsProjectDialogOpen(open);
           if (!open) {
             setSelectedProjectImage(null);
+            setSelectedPersonId(null);
           }
         }}
       >
-        <DialogContent className="max-w-7xl max-h-[95vh] overflow-auto">
+        <DialogContent className="max-w-[95vw] max-h-[95vh] p-4">
           <DialogHeader>
             <DialogTitle>
               {selectedProjectImage?.image.fileName || "Image Details"}
             </DialogTitle>
           </DialogHeader>
           {selectedProjectImage && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-auto max-h-[80vh]">
               {/* Image with Bounding Boxes */}
               <div className="lg:col-span-2">
-                <div className="relative">
+                <div className="relative inline-block border top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] border-gray-200 rounded-lg p-2 bg-gray-50">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={`/images/${selectedProjectImage.image.fileName}`}
                     alt={selectedProjectImage.image.fileName}
-                    className="w-full h-auto rounded-lg"
+                    className="max-w-full h-auto rounded-lg"
                     id="detection-image"
                   />
-                  {/* Bounding boxes will be rendered here */}
+
+                  {/* Bounding Boxes Overlay */}
+                  {selectedPersonId !== null && (
+                    <>
+                      {selectedProjectImage.people
+                        .filter((p) => p.id === selectedPersonId)
+                        .map((person) => {
+                          // Convert from 0-1000 scale to percentage (0-100%)
+                          const [ymin, xmin, ymax, xmax] = person.personBox;
+
+                          const personBoxStyle = {
+                            position: "absolute" as const,
+                            left: `${xmin / 10}%`,
+                            top: `${ymin / 10}%`,
+                            width: `${(xmax - xmin) / 10}%`,
+                            height: `${(ymax - ymin) / 10}%`,
+                            border: `3px solid ${
+                              person.hasHelmet
+                                ? "rgb(34, 197, 94)"
+                                : "rgb(239, 68, 68)"
+                            }`,
+                            borderRadius: "4px",
+                            pointerEvents: "none" as const,
+                          };
+
+                          return (
+                            <div key={`person-box-${person.id}`}>
+                              {/* Person Box */}
+                              <div style={personBoxStyle}>
+                                {/* Person ID Label */}
+                                <div
+                                  className="absolute bottom-2 left-2 bg-white border border-gray-200 px-2 py-1 rounded text-xs md:text-sm font-bold shadow"
+                                  style={{
+                                    color: person.hasHelmet
+                                      ? "rgb(34, 197, 94)"
+                                      : "rgb(239, 68, 68)",
+                                  }}
+                                >
+                                  Person {person.personID + 1}
+                                </div>
+                              </div>
+
+                              {/* Helmet Box */}
+                              {person.helmetBox && (
+                                <div
+                                  style={{
+                                    position: "absolute" as const,
+                                    left: `${person.helmetBox[1] / 10}%`,
+                                    top: `${person.helmetBox[0] / 10}%`,
+                                    width: `${
+                                      (person.helmetBox[3] -
+                                        person.helmetBox[1]) /
+                                      10
+                                    }%`,
+                                    height: `${
+                                      (person.helmetBox[2] -
+                                        person.helmetBox[0]) /
+                                      10
+                                    }%`,
+                                    border: "3px solid rgb(59, 130, 246)",
+                                    borderRadius: "4px",
+                                    pointerEvents: "none" as const,
+                                  }}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                    </>
+                  )}
                 </div>
               </div>
 
               {/* Person List */}
-              <div className="space-y-3">
-                <h3 className="font-semibold text-lg">
+              <div className="space-y-3 overflow-auto">
+                <h3 className="font-semibold text-lg sticky top-0 bg-white pb-2 z-10">
                   Detected People ({selectedProjectImage.people.length})
                 </h3>
 
@@ -1029,7 +1100,24 @@ export default function Home() {
                     No people detected in this image
                   </p>
                 ) : (
-                  <Accordion type="single" collapsible className="w-full">
+                  <Accordion
+                    type="single"
+                    collapsible
+                    className="w-full"
+                    value={
+                      selectedPersonId
+                        ? `person-${selectedPersonId}`
+                        : undefined
+                    }
+                    onValueChange={(value) => {
+                      if (value) {
+                        const personId = parseInt(value.replace("person-", ""));
+                        setSelectedPersonId(personId);
+                      } else {
+                        setSelectedPersonId(null);
+                      }
+                    }}
+                  >
                     {selectedProjectImage.people.map((person) => (
                       <AccordionItem
                         key={person.id}
@@ -1069,6 +1157,10 @@ export default function Home() {
                                 Helmet Confidence:
                               </span>{" "}
                               {(person.helmetConfidence * 100).toFixed(1)}%
+                            </div>
+                            <div>
+                              <span className="font-medium">Has Helmet:</span>{" "}
+                              {person.hasHelmet ? "Yes" : "No"}
                             </div>
                             <div>
                               <span className="font-medium">Person Box:</span> [
