@@ -5,61 +5,79 @@ const dbPath = path.join(process.cwd(), "helmet.db");
 
 declare global {
   var db: Database.Database | undefined;
+  var dbInitialized: boolean | undefined;
 }
 
-let db = global.db;
+/**
+ * Initialize database and create tables
+ */
+function initializeDatabase(): Database.Database {
+  const database = new Database(dbPath);
 
-if (!db) {
-  db = new Database(dbPath);
+  database.pragma("journal_mode = WAL");
+  database.pragma("foreign_keys = ON");
 
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+  console.log("[DB] Database initialized at:", dbPath);
 
+  // Create tables
+  const createProjects = `
+  CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    status INTEGER DEFAULT 0,
+    settings TEXT NOT NULL,
+    created_at INTEGER DEFAULT (unixepoch()) 
+  )
+  `;
+
+  const createImages = `
+  CREATE TABLE IF NOT EXISTS images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    initial_image_date INTEGER,
+    initial_image_location TEXT,
+    file_name TEXT NOT NULL,
+    thumb_file_name TEXT NOT NULL,
+    created_at INTEGER DEFAULT (unixepoch()),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  )
+  `;
+
+  const createPeople = `
+  CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_id INTEGER NOT NULL,
+    person_id INTEGER NOT NULL,
+    person_confidence INTEGER NOT NULL,
+    helmet_confidence INTEGER NOT NULL,
+    has_helmet INTEGER NOT NULL,
+    person_box TEXT NOT NULL,
+    helmet_box TEXT,
+    created_at INTEGER DEFAULT (unixepoch()),
+    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+  )
+  `;
+
+  database.exec(createProjects);
+  database.exec(createImages);
+  database.exec(createPeople);
+
+  console.log("[DB] Database tables created successfully");
+
+  return database;
+}
+
+// Initialize or get existing database
+let db: Database.Database;
+
+if (!global.db || !global.dbInitialized) {
+  db = initializeDatabase();
   global.db = db;
+  global.dbInitialized = true;
+} else {
+  db = global.db;
 }
-
-const createProjects = `
-CREATE TABLE IF NOT EXISTS projects (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  user_id INTEGER NOT NULL,
-  status INTEGER DEFAULT 0,
-  settings TEXT NOT NULL,
-  created_at INTEGER DEFAULT (unixepoch()) 
-)
-`;
-
-const createImages = `
-CREATE TABLE IF NOT EXISTS images (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id INTEGER NOT NULL,
-  initial_image_date INTEGER,
-  initial_image_location TEXT,
-  file_name TEXT NOT NULL,
-  thumb_file_name TEXT NOT NULL,
-  created_at INTEGER DEFAULT (unixepoch()),
-  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-)
-`;
-
-const createPeople = `
-CREATE TABLE IF NOT EXISTS people (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  image_id INTEGER NOT NULL,
-  person_id INTEGER NOT NULL,
-  person_confidence INTEGER NOT NULL,
-  helmet_confidence INTEGER NOT NULL,
-  has_helmet INTEGER NOT NULL,
-  person_box TEXT NOT NULL,
-  helmet_box TEXT,
-  created_at INTEGER DEFAULT (unixepoch()),
-  FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
-)
-`;
-
-db.exec(createProjects);
-db.exec(createImages);
-db.exec(createPeople);
 
 export default db;
 
@@ -72,6 +90,7 @@ export default db;
  */
 export function createProject(name: string, settings: object): number | null {
   try {
+    console.log("[DB] Creating project:", name);
     const stmt = db.prepare(`
       INSERT INTO projects (name, user_id, status, settings, created_at)
       VALUES (?, ?, ?, ?, ?)
@@ -85,9 +104,11 @@ export function createProject(name: string, settings: object): number | null {
       Math.floor(Date.now() / 1000) // current timestamp in seconds
     );
 
-    return result.lastInsertRowid as number;
+    const projectId = result.lastInsertRowid as number;
+    console.log("[DB] Project created with ID:", projectId);
+    return projectId;
   } catch (error) {
-    console.error("Failed to create project:", error);
+    console.error("[DB] Failed to create project:", error);
     return null;
   }
 }
@@ -133,8 +154,11 @@ export function createImage(
       createdAt
     );
 
+    const imageId = result.lastInsertRowid as number;
+    console.log(`[DB] Image saved to database with ID: ${imageId}`);
+
     return {
-      id: result.lastInsertRowid as number,
+      id: imageId,
       projectID: projectId,
       initialImageDate,
       initialImageLocation,
@@ -143,7 +167,7 @@ export function createImage(
       createdAt,
     };
   } catch (error) {
-    console.error("Failed to create image:", error);
+    console.error("[DB] Failed to create image:", error);
     return null;
   }
 }
@@ -197,8 +221,13 @@ export function createPerson(
       createdAt
     );
 
+    const personDbId = result.lastInsertRowid as number;
+    console.log(
+      `[DB] Person saved to database - ID: ${personDbId}, Has Helmet: ${hasHelmet}`
+    );
+
     return {
-      id: result.lastInsertRowid as number,
+      id: personDbId,
       imageID: imageId,
       personID,
       personConfidence,
@@ -209,7 +238,153 @@ export function createPerson(
       createdAt,
     };
   } catch (error) {
-    console.error("Failed to create person:", error);
+    console.error("[DB] Failed to create person:", error);
     return null;
+  }
+}
+
+/**
+ * Fetches all projects from the database, sorted by creation date (newest first).
+ *
+ * @returns Array of projects or empty array if failed
+ */
+export function fetchProjects(): Array<{
+  id: number;
+  projectName: string;
+  userID: number;
+  settings: string;
+  status: number;
+  createdAt: number;
+}> {
+  try {
+    const stmt = db.prepare(`
+      SELECT id, name as projectName, user_id as userID, settings, status, created_at as createdAt
+      FROM projects
+      ORDER BY created_at DESC
+    `);
+
+    const projects = stmt.all();
+    console.log(`[DB] Fetched ${projects.length} project(s)`);
+    return projects as Array<{
+      id: number;
+      projectName: string;
+      userID: number;
+      settings: string;
+      status: number;
+      createdAt: number;
+    }>;
+  } catch (error) {
+    console.error("[DB] Failed to fetch projects:", error);
+    return [];
+  }
+}
+
+/**
+ * Fetches images for given project IDs.
+ *
+ * @param projectIds - Array of project IDs
+ * @returns Array of images or empty array if failed
+ */
+export function fetchImagesByProjectIds(projectIds: number[]): Array<{
+  id: number;
+  projectID: number;
+  initialImageDate: number | null;
+  initialImageLocation: string | null;
+  fileName: string;
+  thumbFileName: string;
+  createdAt: number;
+}> {
+  try {
+    if (projectIds.length === 0) return [];
+
+    const placeholders = projectIds.map(() => "?").join(",");
+    const stmt = db.prepare(`
+      SELECT id, project_id as projectID, initial_image_date as initialImageDate, 
+             initial_image_location as initialImageLocation, file_name as fileName, 
+             thumb_file_name as thumbFileName, created_at as createdAt
+      FROM images
+      WHERE project_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `);
+
+    const images = stmt.all(...projectIds);
+    console.log(
+      `[DB] Fetched ${images.length} image(s) for ${projectIds.length} project(s)`
+    );
+    return images as Array<{
+      id: number;
+      projectID: number;
+      initialImageDate: number | null;
+      initialImageLocation: string | null;
+      fileName: string;
+      thumbFileName: string;
+      createdAt: number;
+    }>;
+  } catch (error) {
+    console.error("[DB] Failed to fetch images:", error);
+    return [];
+  }
+}
+
+/**
+ * Fetches people for given image IDs.
+ *
+ * @param imageIds - Array of image IDs
+ * @returns Array of people or empty array if failed
+ */
+export function fetchPeopleByImageIds(imageIds: number[]): Array<{
+  id: number;
+  imageID: number;
+  personID: number;
+  personConfidence: number;
+  helmetConfidence: number;
+  hasHelmet: boolean;
+  personBox: number[];
+  helmetBox: number[] | null;
+  createdAt: number;
+}> {
+  try {
+    if (imageIds.length === 0) return [];
+
+    const placeholders = imageIds.map(() => "?").join(",");
+    const stmt = db.prepare(`
+      SELECT id, image_id as imageID, person_id as personID, 
+             person_confidence as personConfidence, helmet_confidence as helmetConfidence, 
+             has_helmet as hasHelmet, person_box as personBox, helmet_box as helmetBox, 
+             created_at as createdAt
+      FROM people
+      WHERE image_id IN (${placeholders})
+      ORDER BY image_id ASC, person_id ASC
+    `);
+
+    const people = stmt.all(...imageIds) as Array<{
+      id: number;
+      imageID: number;
+      personID: number;
+      personConfidence: number;
+      helmetConfidence: number;
+      hasHelmet: number;
+      personBox: string;
+      helmetBox: string | null;
+      createdAt: number;
+    }>;
+
+    // Parse JSON strings and convert hasHelmet to boolean
+    const parsedPeople = people.map((person) => ({
+      ...person,
+      hasHelmet: Boolean(person.hasHelmet),
+      personBox: JSON.parse(person.personBox) as number[],
+      helmetBox: person.helmetBox
+        ? (JSON.parse(person.helmetBox) as number[])
+        : null,
+    }));
+
+    console.log(
+      `[DB] Fetched ${parsedPeople.length} person/people for ${imageIds.length} image(s)`
+    );
+    return parsedPeople;
+  } catch (error) {
+    console.error("[DB] Failed to fetch people:", error);
+    return [];
   }
 }

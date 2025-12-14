@@ -15,7 +15,7 @@ export interface Project {
   id: number | null;
   projectName: string;
   userID: number | null; // it is for further role model not implemented in this project
-  settings: ProjectSettings;
+  settings: string;
   status: number; // 0 - not started, 1 - ready, 2 - no people, 3 - error
   createdAt: number | null;
 }
@@ -40,4 +40,16 @@ export interface Person {
   personBox: number[];
   helmetBox: number[] | null;
   createdAt: number | null;
+}
+
+/**
+ * Gemini API response format for person detection
+ */
+export interface GeminiPerson {
+  person_id: number;
+  personConfidence: number;
+  helmetConfidence: number;
+  hasHelmet: boolean;
+  personBox: number[];
+  helmetBox: number[] | null;
 }

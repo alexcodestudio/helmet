@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { ProjectSettings } from "@/lib/types";
+import type { ProjectSettings, GeminiPerson } from "@/lib/types";
 import {
   sanitizeSettings,
   sanitizeOptionalDate,
   sanitizeOptionalLocation,
   generateProjectName,
   saveImageToFileSystem,
-} from "@/lib/utils";
+} from "@/lib/server-utils";
+import { GoogleGenAI } from "@google/genai";
 import { createProject, createImage, createPerson } from "@/lib/db";
 
 const DEFAULT_API_SETTINGS: ProjectSettings = {
@@ -21,6 +22,109 @@ const DEFAULT_API_SETTINGS: ProjectSettings = {
   maxHeight: 1080,
   outputFormat: "pdf",
 };
+
+const genAI = new GoogleGenAI({
+  apiKey: process.env.GOOGLE_API_KEY || "",
+});
+
+export async function requestGem(
+  imageBuffer: Buffer,
+  mimeType: string,
+  filename: string
+) {
+  try {
+    const modelName = "gemini-2.5-flash";
+    const prompt = `
+        Analyze this image for safety compliance.
+        1. Identify every PERSON in the image.
+        2. For each person assign personId starting from 0, check if they are wearing a HELMET.
+        3. Return a JSON object with a list of persons and data for each person.
+        
+        CRITICAL COORDINATE INSTRUCTIONS:
+        - Return bounding boxes as [ymin, xmin, ymax, xmax] on a scale of 0 to 1000. all boxes must have 4 coordinates - set 0 for missing coordinates, there should not be more than 2 missing coordinates.
+        - 0,0 is top-left. 1000,1000 is bottom-right.
+        - If you see a person but NO helmet, return "helmetRect": null.
+        
+        CONFIDENCE:
+        - Estimate your confidence level (0-100) for the existence of the person and the helmet.
+        - If you see a person but NO helmet, return "helmetRect": null.
+        
+        Output Schema:
+        {
+          "fileName": "${filename}",
+          "persons": [
+            { "person_id": number,
+              "personConfidence": number,
+              "helmetConfidence": number,
+              "hasHelmet": boolean,
+              "personBox": [ymin, xmin, ymax, xmax],
+              "helmetBox": [ymin, xmin, ymax, xmax] or null
+            }
+          ]
+        }
+      `;
+
+    const imageBase64 = imageBuffer.toString("base64");
+
+    console.log(`[GEMINI] Analyzing image: ${filename}`);
+
+    // Use new API pattern
+    const response = await genAI.models.generateContent({
+      model: modelName,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: "image/webp",
+                data: imageBase64,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const text = response.text;
+
+    if (!text) {
+      throw new Error("No text in response from Gemini API");
+    }
+
+    // Parse JSON from response (remove markdown code blocks if present)
+    const jsonMatch =
+      text.match(/```json\n([\s\S]*?)\n```/) || text.match(/\{[\s\S]*\}/);
+    let parsed;
+
+    if (jsonMatch) {
+      const jsonText = jsonMatch[1] || jsonMatch[0];
+      parsed = JSON.parse(jsonText);
+    } else {
+      // Try to parse as-is if no markdown
+      parsed = JSON.parse(text);
+    }
+
+    // Add indexes to persons array
+    if (parsed.persons && Array.isArray(parsed.persons)) {
+      parsed.persons = parsed.persons.map(
+        (person: GeminiPerson, index: number) => ({
+          ...person,
+          person_id: index,
+        })
+      );
+      console.log(
+        `[GEMINI] Detected ${parsed.persons.length} person(s) in ${filename}`
+      );
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error(`[GEMINI] Error analyzing ${filename}:`, error);
+    throw error;
+  }
+}
 
 /**
  * Extracts and sanitizes images and their metadata from FormData.
@@ -70,17 +174,16 @@ function extractImagesFromFormData(formData: FormData): Array<{
 }
 
 /**
- * Dummy function for helmet detection in images.
- * This will be replaced with actual ML detection logic later.
+ * Detects helmets in images using Gemini AI.
  *
  * @param image - The image file to analyze
- * @param thumb - The thumbnail file
- * @param projectId - The project ID
- * @param index - The image index
+ * @param thumb - The thumbnail file (not used, kept for signature compatibility)
+ * @param projectId - The project ID (not used, kept for signature compatibility)
+ * @param index - The image index (not used, kept for signature compatibility)
  * @returns Array of detected persons with helmet information
  */
 async function detectHelmetInImage(
-  _image: File,
+  image: File,
   _thumb: File,
   _projectId: number,
   _index: number
@@ -94,36 +197,38 @@ async function detectHelmetInImage(
     helmetBox: number[] | null;
   }>
 > {
-  // Dummy implementation - returns mock data
-  // In production, this would call an ML model for actual detection
-  const numPeople = Math.floor(Math.random() * 3) + 1; // 1-3 people
-  const people = [];
+  try {
+    // Convert File to Buffer
+    const arrayBuffer = await image.arrayBuffer();
+    const imageBuffer = Buffer.from(arrayBuffer);
 
-  for (let i = 0; i < numPeople; i++) {
-    const hasHelmet = Math.random() > 0.3; // 70% chance of having helmet
-    people.push({
-      personID: i + 1,
-      personConfidence: 0.85 + Math.random() * 0.15, // 0.85-1.0
-      helmetConfidence: hasHelmet ? 0.8 + Math.random() * 0.2 : 0, // 0.8-1.0 or 0
-      hasHelmet,
-      personBox: [
-        Math.floor(Math.random() * 100),
-        Math.floor(Math.random() * 100),
-        Math.floor(Math.random() * 200) + 100,
-        Math.floor(Math.random() * 300) + 200,
-      ],
-      helmetBox: hasHelmet
-        ? [
-            Math.floor(Math.random() * 100),
-            Math.floor(Math.random() * 50),
-            Math.floor(Math.random() * 100) + 50,
-            Math.floor(Math.random() * 100) + 50,
-          ]
-        : null,
-    });
+    // Call Gemini API
+    const response = await requestGem(
+      imageBuffer,
+      image.type || "image/webp",
+      image.name
+    );
+
+    // Map response to expected format
+    if (!response.persons || !Array.isArray(response.persons)) {
+      return [];
+    }
+
+    const people = response.persons.map((person: GeminiPerson) => ({
+      personID: person.person_id,
+      personConfidence: person.personConfidence / 100, // Convert from 0-100 to 0-1
+      helmetConfidence: person.helmetConfidence / 100, // Convert from 0-100 to 0-1
+      hasHelmet: person.hasHelmet,
+      personBox: person.personBox,
+      helmetBox: person.helmetBox,
+    }));
+
+    return people;
+  } catch (error) {
+    console.error(`[ERROR] Failed to detect helmets in ${image.name}:`, error);
+    // Return empty array on error to allow processing to continue
+    return [];
   }
-
-  return people;
 }
 
 /**
@@ -135,6 +240,8 @@ async function detectHelmetInImage(
  */
 export async function POST(request: NextRequest) {
   try {
+    console.log("[API] Request received, processing...");
+
     const formData = await request.formData();
 
     // Sanitize settings
@@ -151,6 +258,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log(`[API] Processing ${images.length} image(s)`);
+
     // Create project
     const projectName = generateProjectName(settings.projectTag);
     const projectId = createProject(projectName, settings);
@@ -161,6 +270,8 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    console.log("[API] Image saving started");
 
     // Process all images in parallel
     const imageResults = await Promise.all(
@@ -180,7 +291,9 @@ export async function POST(request: NextRequest) {
               );
 
               if (!fsResult.success) {
-                console.error(`Failed to save image ${index}:`, fsResult.error);
+                console.error(
+                  `[ERROR] Failed to save image ${index} to filesystem`
+                );
                 return null;
               }
 
@@ -193,7 +306,9 @@ export async function POST(request: NextRequest) {
               );
 
               if (!dbImage) {
-                console.error(`Failed to save image ${index} to database`);
+                console.error(
+                  `[ERROR] Failed to save image ${index} to database`
+                );
                 return null;
               }
 
@@ -232,7 +347,7 @@ export async function POST(request: NextRequest) {
 
             if (!dbPerson) {
               console.error(
-                `Failed to save person ${person.personID} for image ${index}`
+                `[ERROR] Failed to save person data for image ${index}`
               );
               return null;
             }
@@ -250,7 +365,7 @@ export async function POST(request: NextRequest) {
             people: personResults.filter((p) => p !== null),
           };
         } catch (error) {
-          console.error(`Error processing image ${index}:`, error);
+          console.error(`[ERROR] Failed to process image ${index}:`, error);
           return {
             index,
             success: false,
@@ -260,11 +375,17 @@ export async function POST(request: NextRequest) {
       })
     );
 
+    console.log("[API] Image saving finished");
+
     // Calculate summary statistics
     const successfulImages = imageResults.filter((r) => r.success).length;
     const totalPeopleDetected = imageResults.reduce(
       (sum, r) => sum + (r.success ? r.peopleDetected ?? 0 : 0),
       0
+    );
+
+    console.log(
+      `[API] Processing complete - ${successfulImages}/${images.length} images processed, ${totalPeopleDetected} people detected`
     );
 
     return NextResponse.json({
@@ -281,7 +402,7 @@ export async function POST(request: NextRequest) {
       results: imageResults,
     });
   } catch (error) {
-    console.error("Error processing request:", error);
+    console.error("[ERROR] Request processing failed:", error);
     return NextResponse.json(
       { error: "Failed to process request" },
       { status: 500 }
