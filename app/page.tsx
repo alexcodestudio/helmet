@@ -329,6 +329,7 @@ export default function Home() {
       const pdfPromises = images.flatMap((image) => {
         if (!image.id) return [];
         const imagePeople = peopleByImage.get(image.id) || [];
+        const imageBaseName = image.fileName.replace(/\.[^/.]+$/, ""); // Remove extension
         return imagePeople.map(async (person) => {
           const pdfBytes = await generatePersonReportBytes({
             person,
@@ -336,7 +337,7 @@ export default function Home() {
             projectName,
             imageUrl: `/images/${image.fileName}`,
           });
-          const fileName = `${projectName}_Person${
+          const fileName = `${projectName}_${imageBaseName}_Person${
             person.personID + 1
           }_Report.pdf`;
           zip.file(fileName, pdfBytes);
@@ -674,7 +675,7 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen p-2 md:px-8 md:pb-8 mx-auto max-w-7xl bg-gray-50">
+    <main className="min-h-screen p-2 md:px-8 md:pb-8 mx-auto max-w-7xl bg-gray-100">
       <Toaster position="top-center" />
 
       {/* Header */}
@@ -684,7 +685,7 @@ export default function Home() {
           <HardHat className="md:h-16 md:w-16 h-8 w-8 mr-4" />
           HelmetCheck API
         </h1>
-        <h2 className="flex bg-white mx-auto cursor-pointer hover:bg-gray-100 mb-8 border w-fit border-gray-200 rounded-lg p-4 md:px-8 items-center text-xl md:text-3xl font-bold">
+        <h2 className="flex bg-white mx-auto cursor-pointer hover:bg-gray-50 hover:text-yellow-800 mb-8 border w-fit border-gray-200 rounded-lg p-4 md:px-8 items-center text-xl md:text-3xl font-bold">
           API README
           <Info className="md:h-16 md:w-16 h-8 w-8 ml-4" />
         </h2>
