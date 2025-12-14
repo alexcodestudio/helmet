@@ -116,6 +116,7 @@ export default function Home() {
     people: Person[];
   } | null>(null);
   const [isReportsDialogOpen, setIsReportsDialogOpen] = useState(false);
+  const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(false);
 
   /**
    * Initializes and fetches project list from database
@@ -685,7 +686,10 @@ export default function Home() {
           <HardHat className="md:h-16 md:w-16 h-8 w-8 mr-4" />
           HelmetCheck API
         </h1>
-        <h2 className="flex bg-white mx-auto cursor-pointer hover:bg-gray-50 hover:text-yellow-800 mb-8 border w-fit border-gray-200 rounded-lg p-4 md:px-8 items-center text-xl md:text-3xl font-bold">
+        <h2
+          onClick={() => setIsInfoDialogOpen(true)}
+          className="flex bg-white mx-auto cursor-pointer hover:bg-gray-50 hover:text-yellow-800 mb-8 border w-fit border-gray-200 rounded-lg p-4 md:px-8 items-center text-xl md:text-3xl font-bold"
+        >
           API README
           <Info className="md:h-16 md:w-16 h-8 w-8 ml-4" />
         </h2>
@@ -1562,6 +1566,452 @@ export default function Home() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Project Information Modal */}
+      <Dialog open={isInfoDialogOpen} onOpenChange={setIsInfoDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold">
+              HelmetCheck API - Project Overview
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="overflow-y-auto pr-4 space-y-6">
+            {/* Core Endpoint Section */}
+            <section>
+              <h3 className="text-xl font-bold mb-3 text-blue-600">
+                🎯 Core Endpoint: <code className="text-sm">/api/detect</code>
+              </h3>
+              <div className="bg-gray-50 p-4 rounded-lg space-y-3">
+                <p className="text-sm">
+                  <strong>Method:</strong> POST
+                </p>
+                <p className="text-sm">
+                  <strong>Purpose:</strong> Main detection endpoint that
+                  receives compressed images and settings, then uses Google
+                  Gemini AI to detect people and helmet usage in construction
+                  site images.
+                </p>
+              </div>
+            </section>
+
+            {/* Input Schema Section */}
+            <section>
+              <h3 className="text-lg font-semibold mb-2">📥 Input Schema</h3>
+              <div className="bg-slate-100 p-4 rounded-lg text-sm font-mono space-y-2">
+                <div>
+                  <strong>Content-Type:</strong>{" "}
+                  <code>multipart/form-data</code>
+                </div>
+                <div className="mt-3">
+                  <strong>Fields:</strong>
+                </div>
+                <ul className="ml-4 space-y-1 text-xs">
+                  <li>
+                    • <code>settings</code>: JSON string with configuration
+                  </li>
+                  <li>
+                    • <code>image_0, image_1, ...</code>: Compressed full images
+                    (WebP)
+                  </li>
+                  <li>
+                    • <code>thumb_0, thumb_1, ...</code>: Thumbnail images
+                  </li>
+                  <li>
+                    • <code>initialImageDate_0, ...</code>: EXIF timestamps
+                    (optional)
+                  </li>
+                  <li>
+                    • <code>initialImageLocation_0, ...</code>: GPS coordinates
+                    (optional)
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            {/* Settings Parameters Section */}
+            <section>
+              <h3 className="text-lg font-semibold mb-2">
+                ⚙️ Settings Parameters
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-blue-50 p-3 rounded">
+                  <strong className="text-sm">confidence</strong>
+                  <p className="text-xs text-gray-600">
+                    Detection threshold (0.05 - 1.0)
+                  </p>
+                </div>
+                <div className="bg-blue-50 p-3 rounded">
+                  <strong className="text-sm">maxFileSize</strong>
+                  <p className="text-xs text-gray-600">Max size in KB</p>
+                </div>
+                <div className="bg-blue-50 p-3 rounded">
+                  <strong className="text-sm">maxWidth</strong>
+                  <p className="text-xs text-gray-600">Max image width (px)</p>
+                </div>
+                <div className="bg-blue-50 p-3 rounded">
+                  <strong className="text-sm">maxHeight</strong>
+                  <p className="text-xs text-gray-600">Max image height (px)</p>
+                </div>
+              </div>
+              <p className="text-sm mt-3 text-gray-600">
+                All compression and resizing is performed on the{" "}
+                <strong>client-side</strong> before upload, reducing server
+                load.
+              </p>
+            </section>
+
+            {/* AI Detection Process */}
+            <section>
+              <h3 className="text-lg font-semibold mb-2">
+                🤖 AI Detection Process
+              </h3>
+              <div className="space-y-2">
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600 font-bold">1.</span>
+                  <p className="text-sm">
+                    API receives compressed images and parses FormData
+                  </p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600 font-bold">2.</span>
+                  <p className="text-sm">
+                    Images sent to Google Gemini 2.5 Flash for analysis
+                  </p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600 font-bold">3.</span>
+                  <p className="text-sm">
+                    AI detects each person and returns:{" "}
+                    <strong>person bounding box</strong> and{" "}
+                    <strong>helmet bounding box</strong>
+                  </p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600 font-bold">4.</span>
+                  <p className="text-sm">
+                    Results stored in SQLite database with confidence scores
+                  </p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600 font-bold">5.</span>
+                  <p className="text-sm">
+                    Bounding boxes normalized to 0-1000 scale for precise
+                    positioning
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/* Client-Side Features */}
+            <section>
+              <h3 className="text-lg font-semibold mb-2">
+                💻 Client-Side Features
+              </h3>
+              <div className="bg-green-50 p-4 rounded-lg space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600">✓</span>
+                  <p className="text-sm">
+                    <strong>Image Compression:</strong> Uses{" "}
+                    <code>browser-image-compression</code> library
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600">✓</span>
+                  <p className="text-sm">
+                    <strong>EXIF Parsing:</strong> Extracts date and GPS data
+                    with <code>ExifReader</code>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600">✓</span>
+                  <p className="text-sm">
+                    <strong>PDF Generation:</strong> Creates reports using{" "}
+                    <code>pdf-lib</code> in the browser
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600">✓</span>
+                  <p className="text-sm">
+                    <strong>ZIP Creation:</strong> Bundles multiple PDFs with{" "}
+                    <code>JSZip</code>
+                  </p>
+                </div>
+                <p className="text-sm mt-3 font-semibold text-green-700">
+                  ⚡ Preferred Method: Client-side processing reduces server
+                  load and provides instant feedback
+                </p>
+              </div>
+            </section>
+
+            {/* Dashboard & Analytics */}
+            <section>
+              <h3 className="text-lg font-semibold mb-2">
+                📊 Minimalistic Dashboard
+              </h3>
+              <div className="space-y-2">
+                <p className="text-sm">
+                  The frontend provides a clean, analytical view with:
+                </p>
+                <ul className="ml-4 space-y-1 text-sm">
+                  <li>
+                    • Project-level statistics (images, people, violations)
+                  </li>
+                  <li>• Real-time processing status with visual indicators</li>
+                  <li>
+                    • Interactive image gallery with bounding box overlays
+                  </li>
+                  <li>
+                    • Per-person confidence scores and helmet detection status
+                  </li>
+                  <li>
+                    • Color-coded safety compliance (🟢 Green = Safe, 🔴 Red =
+                    Violation)
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            {/* PDF Reports */}
+            <section>
+              <h3 className="text-lg font-semibold mb-2">
+                📄 PDF Report Generation
+              </h3>
+              <div className="bg-purple-50 p-4 rounded-lg space-y-2">
+                <p className="text-sm font-semibold">
+                  Individual reports generated for:
+                </p>
+                <ul className="ml-4 space-y-1 text-sm">
+                  <li>
+                    • <strong>Each person</strong> detected
+                  </li>
+                  <li>
+                    • In <strong>each image</strong>
+                  </li>
+                  <li>
+                    • For <strong>each project</strong>
+                  </li>
+                </ul>
+                <div className="mt-3 border-t pt-2">
+                  <p className="text-sm">
+                    <strong>Download Options:</strong>
+                  </p>
+                  <ul className="ml-4 space-y-1 text-sm">
+                    <li>
+                      • One-by-one: Click individual &quot;Generate&quot;
+                      buttons
+                    </li>
+                    <li>
+                      • Batch ZIP: Download all reports for a project at once
+                    </li>
+                  </ul>
+                </div>
+                <div className="mt-3 border-t pt-2">
+                  <p className="text-sm">
+                    <strong>Report Contents:</strong>
+                  </p>
+                  <ul className="ml-4 space-y-1 text-sm">
+                    <li>• Annotated image with color-coded bounding boxes</li>
+                    <li>• Project metadata and timestamps</li>
+                    <li>• GPS coordinates (if available)</li>
+                    <li>• Detection confidence scores</li>
+                    <li>• Safety recommendations for violations</li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+
+            {/* Additional API Endpoints */}
+            <section className="border-t pt-4">
+              <h3 className="text-xl font-bold mb-3 text-blue-600">
+                🔌 Additional API Endpoints
+              </h3>
+
+              {/* /api/report */}
+              <div className="mb-4 bg-indigo-50 p-4 rounded-lg">
+                <h4 className="font-semibold mb-2">
+                  <code className="text-sm">/api/report</code> | POST
+                </h4>
+                <p className="text-sm mb-3">
+                  Server-side PDF generation with ZIP packaging capability.
+                </p>
+                <div className="bg-white p-3 rounded text-sm font-mono space-y-2">
+                  <div className="font-semibold mb-2">Request Format:</div>
+                  <pre className="text-xs overflow-x-auto">
+                    {`{
+  "projectName": "251214-155400-FE", 
+  // OR
+  "projectId": 123,
+  
+  "format": "pdf",  // Currently PDF, 
+                    // can be improved 
+                    // (email sending, etc.)
+  
+  "zipped": "true"  // Bundle reports as ZIP
+}`}
+                  </pre>
+                </div>
+                <p className="text-xs text-gray-600 mt-2">
+                  <strong>Note:</strong> Server-side generation using{" "}
+                  <code>pdf-lib</code> and <code>sharp</code> for image
+                  processing.
+                </p>
+              </div>
+
+              {/* /api/health */}
+              <div className="mb-4 bg-teal-50 p-4 rounded-lg">
+                <h4 className="font-semibold mb-2">
+                  <code className="text-sm">/api/health</code> | GET{" "}
+                  <span className="text-xs text-gray-500">(optional)</span>
+                </h4>
+                <p className="text-sm mb-3">
+                  Comprehensive system health monitoring endpoint.
+                </p>
+                <div className="space-y-2">
+                  <div className="text-sm">
+                    <strong>Checks performed:</strong>
+                  </div>
+                  <ul className="ml-4 space-y-1 text-sm">
+                    <li>• Database connectivity validation</li>
+                    <li>• LLM (Gemini AI) response verification</li>
+                    <li>• Filesystem write permission testing</li>
+                    <li>• Server availability confirmation</li>
+                  </ul>
+                  <div className="mt-2 text-xs text-gray-600">
+                    <strong>Returns:</strong> Detailed response with status,
+                    response times, and error messages for each component.
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Potential Improvements */}
+            <section className="border-t pt-4">
+              <h3 className="text-xl font-bold mb-3 text-purple-600">
+                🚀 Potential Improvements
+              </h3>
+              <div className="space-y-3">
+                <div className="bg-purple-50 p-3 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-600 font-bold">•</span>
+                    <div>
+                      <strong className="text-sm">
+                        Automated Cleanup (Cron)
+                      </strong>
+                      <p className="text-xs text-gray-600">
+                        Scheduled task to clean old files and database records
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-3 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-600 font-bold">•</span>
+                    <div>
+                      <strong className="text-sm">Email Report Delivery</strong>
+                      <p className="text-xs text-gray-600">
+                        Easy integration to send PDF reports via email directly
+                        from API
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-3 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-600 font-bold">•</span>
+                    <div>
+                      <strong className="text-sm">
+                        Multi-LLM Support with Weights
+                      </strong>
+                      <p className="text-xs text-gray-600">
+                        Combine multiple LLMs (Gemini, Grok) with adjustable
+                        weights and custom prompts - example already implemented
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-3 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-600 font-bold">•</span>
+                    <div>
+                      <strong className="text-sm">
+                        User Role & Permission System
+                      </strong>
+                      <p className="text-xs text-gray-600">
+                        Divide projects by users with role-based access control
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-3 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-600 font-bold">•</span>
+                    <div>
+                      <strong className="text-sm">
+                        Android APK for Field Use
+                      </strong>
+                      <p className="text-xs text-gray-600">
+                        Mobile app to repurpose old phones as camera devices
+                        with direct API integration
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-3 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <span className="text-purple-600 font-bold">•</span>
+                    <div>
+                      <strong className="text-sm">And Many More...</strong>
+                      <p className="text-xs text-gray-600">
+                        Webhook integrations, real-time notifications, advanced
+                        analytics, batch processing, etc.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Architecture Highlight */}
+            <section className="border-t pt-4">
+              <h3 className="text-lg font-semibold mb-2">
+                🏗️ Architecture Highlights
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 p-3 rounded">
+                  <strong className="text-sm">Database</strong>
+                  <p className="text-xs text-gray-600">
+                    SQLite with CASCADE deletion
+                  </p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded">
+                  <strong className="text-sm">AI Model</strong>
+                  <p className="text-xs text-gray-600">
+                    Google Gemini 2.5 Flash
+                  </p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded">
+                  <strong className="text-sm">Frontend</strong>
+                  <p className="text-xs text-gray-600">
+                    Next.js 16 + React 19 + TypeScript
+                  </p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded">
+                  <strong className="text-sm">Processing</strong>
+                  <p className="text-xs text-gray-600">
+                    Parallel multi-image detection
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
         </DialogContent>
       </Dialog>
     </main>
