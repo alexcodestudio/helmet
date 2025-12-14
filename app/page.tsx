@@ -12,6 +12,9 @@ import {
   Loader2,
   Folder,
   FolderKanban,
+  Trash2,
+  FileText,
+  Info,
 } from "lucide-react";
 import {
   Accordion,
@@ -27,6 +30,11 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { extractImageMetadata } from "@/lib/image-metadata";
+import {
+  generatePersonReport,
+  generatePersonReportBytes,
+} from "@/lib/pdf-generator";
+import JSZip from "jszip";
 import type { ProjectSettings, Project, Image, Person } from "@/lib/types";
 
 const DEFAULT_API_SETTINGS: ProjectSettings = {
@@ -102,6 +110,12 @@ export default function Home() {
   } | null>(null);
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [selectedProjectForReports, setSelectedProjectForReports] = useState<{
+    project: Project;
+    images: Image[];
+    people: Person[];
+  } | null>(null);
+  const [isReportsDialogOpen, setIsReportsDialogOpen] = useState(false);
 
   /**
    * Initializes and fetches project list from database
@@ -194,6 +208,163 @@ export default function Home() {
     } catch (error) {
       console.error(`[ERROR] Failed to load project ${projectId}:`, error);
       toast.error("Failed to load new project");
+    }
+  };
+
+  /**
+   * Removes a project and all associated data from the database and filesystem.
+   *
+   * @param projectId - The ID of the project to remove
+   */
+  const removeProject = async (projectId: number) => {
+    if (
+      !confirm(
+        "Are you sure you want to delete this project? This action cannot be undone."
+      )
+    ) {
+      return;
+    }
+
+    try {
+      console.log(`[CLIENT] Removing project ${projectId}...`);
+      toast.loading("Deleting project...", { id: `delete-${projectId}` });
+
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete project");
+      }
+
+      const result = await response.json();
+
+      // Remove project and associated data from state
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setProjectImages((prev) =>
+        prev.filter((img) => img.projectID !== projectId)
+      );
+      setProjectPeople((prev) => {
+        const imageIds = projectImages
+          .filter((img) => img.projectID === projectId)
+          .map((img) => img.id);
+        return prev.filter((person) => !imageIds.includes(person.imageID));
+      });
+
+      toast.success(
+        `Project deleted successfully! ${result.details.imagesDeleted} images removed.`,
+        { id: `delete-${projectId}` }
+      );
+      console.log(`[CLIENT] Project ${projectId} removed:`, result.details);
+    } catch (error) {
+      console.error(`[ERROR] Failed to remove project ${projectId}:`, error);
+      toast.error("Failed to delete project. Please try again.", {
+        id: `delete-${projectId}`,
+      });
+    }
+  };
+
+  /**
+   * Generates a PDF report for a specific person detection.
+   *
+   * @param person - The person data
+   * @param image - The image data
+   * @param projectName - The project name
+   */
+  const handleGenerateReport = async (
+    person: Person,
+    image: Image,
+    projectName: string
+  ) => {
+    try {
+      toast.loading("Generating PDF report...", { id: `pdf-${person.id}` });
+
+      await generatePersonReport({
+        person,
+        image,
+        projectName,
+        imageUrl: `/images/${image.fileName}`,
+      });
+
+      toast.success("PDF report generated successfully!", {
+        id: `pdf-${person.id}`,
+      });
+    } catch (error) {
+      console.error("Failed to generate PDF report:", error);
+      toast.error("Failed to generate PDF report. Please try again.", {
+        id: `pdf-${person.id}`,
+      });
+    }
+  };
+
+  /**
+   * Downloads all reports for a project as a ZIP file.
+   *
+   * @param projectName - The project name
+   * @param images - Array of images in the project
+   * @param people - Array of people detected in the project
+   */
+  const handleDownloadAllReports = async (
+    projectName: string,
+    images: Image[],
+    people: Person[]
+  ) => {
+    try {
+      toast.loading("Generating all reports...", { id: "zip-all" });
+
+      const zip = new JSZip();
+
+      // Group people by image
+      const peopleByImage = new Map<number, Person[]>();
+      people.forEach((person) => {
+        if (person.imageID && !peopleByImage.has(person.imageID)) {
+          peopleByImage.set(person.imageID, []);
+        }
+        if (person.imageID) {
+          peopleByImage.get(person.imageID)!.push(person);
+        }
+      });
+
+      // Generate all PDFs and add to zip
+      const pdfPromises = images.flatMap((image) => {
+        if (!image.id) return [];
+        const imagePeople = peopleByImage.get(image.id) || [];
+        return imagePeople.map(async (person) => {
+          const pdfBytes = await generatePersonReportBytes({
+            person,
+            image,
+            projectName,
+            imageUrl: `/images/${image.fileName}`,
+          });
+          const fileName = `${projectName}_Person${
+            person.personID + 1
+          }_Report.pdf`;
+          zip.file(fileName, pdfBytes);
+        });
+      });
+
+      await Promise.all(pdfPromises);
+
+      // Generate zip file
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+
+      // Download zip file
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${projectName}_All_Reports.zip`;
+      link.click();
+
+      URL.revokeObjectURL(url);
+
+      toast.success(`All ${people.length} reports downloaded successfully!`, {
+        id: "zip-all",
+      });
+    } catch (error) {
+      console.error("Failed to download all reports:", error);
+      toast.error("Failed to download reports. Please try again.", {
+        id: "zip-all",
+      });
     }
   };
 
@@ -503,15 +674,21 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen p-2 md:p-8 mx-auto max-w-7xl bg-gray-50">
+    <main className="min-h-screen p-2 md:px-8 md:pb-8 mx-auto max-w-7xl bg-gray-50">
       <Toaster position="top-center" />
 
       {/* Header */}
 
-      <h1 className="flex bg-white mx-auto mb-8 border w-fit border-gray-200 rounded-lg p-4 items-center text-3xl font-bold">
-        <HardHat className="h-16 w-16" />
-        HelmetCheck API
-      </h1>
+      <div className="flex items-center justify-between">
+        <h1 className="flex bg-white mx-auto mb-8 border w-fit border-gray-200 rounded-lg p-4 md:px-8 items-center text-xl md:text-3xl font-bold">
+          <HardHat className="md:h-16 md:w-16 h-8 w-8 mr-4" />
+          HelmetCheck API
+        </h1>
+        <h2 className="flex bg-white mx-auto cursor-pointer hover:bg-gray-100 mb-8 border w-fit border-gray-200 rounded-lg p-4 md:px-8 items-center text-xl md:text-3xl font-bold">
+          API README
+          <Info className="md:h-16 md:w-16 h-8 w-8 ml-4" />
+        </h2>
+      </div>
 
       {/* Form */}
       <form className="max-w-4xl mx-auto space-y-6 bg-white  p-4 md:px-8 md:pb-8 rounded-lg border border-gray-200">
@@ -735,7 +912,7 @@ export default function Home() {
                         <img
                           src={image.thumbUrl}
                           alt={image.originalName}
-                          className="h-24 w-24 rounded object-cover"
+                          className="h-24 w-24 rounded object-contain bg-gray-100"
                         />
                         <div className="flex-1">
                           <p className="font-medium">{image.originalName}</p>
@@ -800,18 +977,18 @@ export default function Home() {
             <AccordionItem
               key={project.id}
               value={project.id}
-              className="border-yellow-300"
+              className="border-red-300"
             >
               <AccordionTrigger className="hover:no-underline">
                 <div className="flex items-center m-auto gap-3">
-                  <Loader2 className="h-5 w-5 animate-spin text-yellow-600" />
-                  <span className="font-semibold text-yellow-800">
+                  <Loader2 className="h-5 w-5 animate-spin text-red-600" />
+                  <span className="font-semibold text-red-800">
                     {project.name}
                   </span>
                 </div>
               </AccordionTrigger>
               <AccordionContent>
-                <div className="space-y-2 text-sm text-yellow-800">
+                <div className="space-y-2 text-sm text-red-800">
                   <p>Detecting helmets in uploaded images...</p>
                   <p>This may take a few moments.</p>
                 </div>
@@ -855,33 +1032,81 @@ export default function Home() {
                   className="bg-white"
                 >
                   <AccordionTrigger>
-                    <div className="flex items-center gap-3">
-                      <Folder className="h-5 w-5 text-blue-600" />
-                      <span className="font-semibold">
-                        {project.projectName}
-                      </span>
+                    <div className="flex items-center flex-wrap justify-start w-full pr-4 cursor-pointer">
+                      <div className="flex items-center gap-3">
+                        <Folder className="h-5 w-5 text-blue-600" />
+                        <span className="font-semibold">
+                          {project.projectName}
+                        </span>
+                      </div>
+
+                      {/* Reports Available Link */}
+                      {totalPeople > 0 && (
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedProjectForReports({
+                              project,
+                              images: projectImgs,
+                              people: projectPpl,
+                            });
+                            setIsReportsDialogOpen(true);
+                          }}
+                          className="flex md:ml-10 border border-gray-200 rounded-md p-2 items-center gap-2 text-sm px-3 py-1 hover:bg-gray-100 transition-colors"
+                        >
+                          <span className="font-medium text-gray-700 font-semibold">
+                            {totalPeople} reports available.
+                          </span>
+                          <span
+                            className={
+                              peopleWithoutHelmets === 0
+                                ? "text-green-600 font-semibold"
+                                : "text-red-600 font-semibold"
+                            }
+                          >
+                            violations {peopleWithoutHelmets}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </AccordionTrigger>
                   <AccordionContent>
                     <div className="space-y-4">
                       {/* Project Stats */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                        <div>
-                          <span className="font-medium">Images:</span>{" "}
-                          {projectImgs.length}
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm flex-1">
+                          <div>
+                            <span className="font-medium">Images:</span>{" "}
+                            {projectImgs.length}
+                          </div>
+                          <div>
+                            <span className="font-medium">People:</span>{" "}
+                            {totalPeople}
+                          </div>
+                          <div className="text-green-600">
+                            <span className="font-medium">With helmets:</span>{" "}
+                            {peopleWithHelmets}
+                          </div>
+                          <div className="text-red-600">
+                            <span className="font-medium">
+                              Without helmets:
+                            </span>{" "}
+                            {peopleWithoutHelmets}
+                          </div>
                         </div>
-                        <div>
-                          <span className="font-medium">People:</span>{" "}
-                          {totalPeople}
-                        </div>
-                        <div className="text-green-600">
-                          <span className="font-medium">With helmets:</span>{" "}
-                          {peopleWithHelmets}
-                        </div>
-                        <div className="text-red-600">
-                          <span className="font-medium">Without helmets:</span>{" "}
-                          {peopleWithoutHelmets}
-                        </div>
+
+                        {/* Remove Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (project.id) removeProject(project.id);
+                          }}
+                          className="px-3 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border border-red-300 rounded-lg transition-colors flex items-center gap-2"
+                          title="Delete project"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          <span className="hidden sm:inline">Remove</span>
+                        </button>
                       </div>
 
                       {/* Images List */}
@@ -914,7 +1139,7 @@ export default function Home() {
                                   <img
                                     src={`/images/${img.thumbFileName}`}
                                     alt={img.fileName}
-                                    className="h-16 w-16 rounded object-cover"
+                                    className="h-16 w-16 rounded object-contain bg-gray-100"
                                   />
 
                                   {/* Image Info */}
@@ -970,17 +1195,17 @@ export default function Home() {
 
       {/* Upload Image Preview Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>{selectedImage?.originalName}</DialogTitle>
           </DialogHeader>
           {selectedImage && (
-            <div>
+            <div className="flex justify-center items-center max-h-[75vh]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={selectedImage.imageUrl}
                 alt={selectedImage.originalName}
-                className="w-full h-auto rounded-lg"
+                className="max-w-full max-h-[75vh] h-auto w-auto rounded-lg object-contain"
               />
             </div>
           )}
@@ -998,22 +1223,22 @@ export default function Home() {
           }
         }}
       >
-        <DialogContent className="max-w-[95vw] max-h-[95vh] p-4">
+        <DialogContent className="max-w-[95vw] max-h-[95vh] p-4 overflow-auto">
           <DialogHeader>
             <DialogTitle>
               {selectedProjectImage?.image.fileName || "Image Details"}
             </DialogTitle>
           </DialogHeader>
           {selectedProjectImage && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-auto max-h-[80vh]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 max-h-[75vh]">
               {/* Image with Bounding Boxes */}
-              <div className="lg:col-span-2">
-                <div className="relative inline-block border top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] border-gray-200 rounded-lg p-2 bg-gray-50">
+              <div className="lg:col-span-2 flex justify-center items-start overflow-auto">
+                <div className="relative inline-block border border-gray-200 rounded-lg p-2 bg-gray-50">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={`/images/${selectedProjectImage.image.fileName}`}
                     alt={selectedProjectImage.image.fileName}
-                    className="max-w-full h-auto rounded-lg"
+                    className="max-w-full max-h-[70vh] w-auto h-auto rounded-lg object-contain"
                     id="detection-image"
                   />
 
@@ -1145,38 +1370,193 @@ export default function Home() {
                           </div>
                         </AccordionTrigger>
                         <AccordionContent className="px-3">
-                          <div className="space-y-2 text-sm">
-                            <div>
-                              <span className="font-medium">
-                                Person Confidence:
-                              </span>{" "}
-                              {(person.personConfidence * 100).toFixed(1)}%
-                            </div>
-                            <div>
-                              <span className="font-medium">
-                                Helmet Confidence:
-                              </span>{" "}
-                              {(person.helmetConfidence * 100).toFixed(1)}%
-                            </div>
-                            <div>
-                              <span className="font-medium">Has Helmet:</span>{" "}
-                              {person.hasHelmet ? "Yes" : "No"}
-                            </div>
-                            <div>
-                              <span className="font-medium">Person Box:</span> [
-                              {person.personBox.join(", ")}]
-                            </div>
-                            {person.helmetBox && (
+                          <div className="space-y-3 text-sm">
+                            <div className="space-y-2">
                               <div>
-                                <span className="font-medium">Helmet Box:</span>{" "}
-                                [{person.helmetBox.join(", ")}]
+                                <span className="font-medium">
+                                  Person Confidence:
+                                </span>{" "}
+                                {(person.personConfidence * 100).toFixed(1)}%
                               </div>
-                            )}
+                              <div>
+                                <span className="font-medium">
+                                  Helmet Confidence:
+                                </span>{" "}
+                                {(person.helmetConfidence * 100).toFixed(1)}%
+                              </div>
+                              <div>
+                                <span className="font-medium">Has Helmet:</span>{" "}
+                                {person.hasHelmet ? "Yes" : "No"}
+                              </div>
+                              <div>
+                                <span className="font-medium">Person Box:</span>{" "}
+                                [{person.personBox.join(", ")}]
+                              </div>
+                              {person.helmetBox && (
+                                <div>
+                                  <span className="font-medium">
+                                    Helmet Box:
+                                  </span>{" "}
+                                  [{person.helmetBox.join(", ")}]
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Generate Report Button */}
+                            <button
+                              onClick={() => {
+                                const project = projects.find(
+                                  (p) =>
+                                    p.id ===
+                                    selectedProjectImage.image.projectID
+                                );
+                                if (project) {
+                                  handleGenerateReport(
+                                    person,
+                                    selectedProjectImage.image,
+                                    project.projectName
+                                  );
+                                }
+                              }}
+                              className="w-full mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2 font-medium"
+                            >
+                              <FileText className="h-4 w-4" />
+                              Generate PDF Report
+                            </button>
                           </div>
                         </AccordionContent>
                       </AccordionItem>
                     ))}
                   </Accordion>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Project Reports Modal */}
+      <Dialog
+        open={isReportsDialogOpen}
+        onOpenChange={(open) => {
+          setIsReportsDialogOpen(open);
+          if (!open) {
+            setSelectedProjectForReports(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Reports for {selectedProjectForReports?.project.projectName}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedProjectForReports && (
+            <div className="space-y-4">
+              {/* Summary */}
+              <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
+                <div className="text-sm">
+                  <span className="font-medium">Total Reports:</span>{" "}
+                  {selectedProjectForReports.people.length}
+                </div>
+                <div className="text-sm text-red-600">
+                  <span className="font-medium">Missing Helmets:</span>{" "}
+                  {
+                    selectedProjectForReports.people.filter((p) => !p.hasHelmet)
+                      .length
+                  }
+                </div>
+                <div className="text-sm text-green-600">
+                  <span className="font-medium">With Helmets:</span>{" "}
+                  {
+                    selectedProjectForReports.people.filter((p) => p.hasHelmet)
+                      .length
+                  }
+                </div>
+              </div>
+
+              {/* Download All Button */}
+              {selectedProjectForReports.people.length > 0 && (
+                <button
+                  onClick={() =>
+                    handleDownloadAllReports(
+                      selectedProjectForReports.project.projectName,
+                      selectedProjectForReports.images,
+                      selectedProjectForReports.people
+                    )
+                  }
+                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2 font-medium"
+                >
+                  <FileText className="h-5 w-5" />
+                  Download All Reports (ZIP)
+                </button>
+              )}
+
+              {/* Reports List */}
+              <div className="space-y-2">
+                <h3 className="font-semibold text-lg">Individual Reports</h3>
+                {selectedProjectForReports.people.length === 0 ? (
+                  <p className="text-sm text-gray-500 text-center py-8">
+                    No people detected in this project
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedProjectForReports.images.map((image) => {
+                      const imagePeople =
+                        selectedProjectForReports.people.filter(
+                          (p) => p.imageID === image.id
+                        );
+
+                      if (imagePeople.length === 0) return null;
+
+                      return (
+                        <div key={image.id} className="border rounded-lg p-3">
+                          <h4 className="font-medium text-sm mb-2 text-gray-700">
+                            {image.fileName}
+                          </h4>
+                          <div className="space-y-2">
+                            {imagePeople.map((person) => (
+                              <div
+                                key={person.id}
+                                className="flex items-center justify-between p-2 bg-gray-50 rounded"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="font-medium text-sm">
+                                    Person {person.personID + 1}
+                                  </span>
+                                  <span
+                                    className={`text-xs px-2 py-1 rounded ${
+                                      person.hasHelmet
+                                        ? "bg-green-100 text-green-700"
+                                        : "bg-red-100 text-red-700"
+                                    }`}
+                                  >
+                                    {person.hasHelmet
+                                      ? "✓ Has Helmet"
+                                      : "✗ No Helmet"}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() =>
+                                    handleGenerateReport(
+                                      person,
+                                      image,
+                                      selectedProjectForReports.project
+                                        .projectName
+                                    )
+                                  }
+                                  className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors flex items-center gap-1"
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  Generate
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             </div>

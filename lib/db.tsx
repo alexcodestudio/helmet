@@ -388,3 +388,34 @@ export function fetchPeopleByImageIds(imageIds: number[]): Array<{
     return [];
   }
 }
+
+/**
+ * Deletes a project and all associated data (images and people via CASCADE).
+ *
+ * @param projectId - The ID of the project to delete
+ * @returns True if deletion was successful, false otherwise
+ */
+export function deleteProject(projectId: number): boolean {
+  try {
+    console.log(`[DB] Deleting project ${projectId}...`);
+
+    const stmt = db.prepare(`
+      DELETE FROM projects WHERE id = ?
+    `);
+
+    const result = stmt.run(projectId);
+
+    if (result.changes > 0) {
+      console.log(
+        `[DB] Project ${projectId} deleted successfully (CASCADE will remove images and people)`
+      );
+      return true;
+    } else {
+      console.log(`[DB] Project ${projectId} not found`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`[DB] Failed to delete project ${projectId}:`, error);
+    return false;
+  }
+}

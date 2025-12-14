@@ -35,6 +35,8 @@ export async function requestGem(
   try {
     const modelName = "gemini-2.5-flash";
     const prompt = `
+        IMPORTANT: You are a safety compliance expert. You are tasked with analyzing images for safety compliance.
+        IMPORTANT: You need to provide coordinates of objects in the image for further processing and they must be  very accurate 
         Analyze this image for safety compliance.
         1. Identify every PERSON in the image.
         2. For each person assign personId starting from 0, check if they are wearing a HELMET.
@@ -47,7 +49,9 @@ export async function requestGem(
         
         CONFIDENCE:
         - Estimate your confidence level (0-100) for the existence of the person and the helmet.
-        - If you see a person but NO helmet, return "helmetRect": null.
+        - If you see only part of a person, it should lower confidence
+        - You must see parts of a person, items smaller than 3% of the image size should not be considered as a person.
+        - If you see a person but NO helmet, return "helmetRect": null 
         
         Output Schema:
         {
@@ -180,13 +184,15 @@ function extractImagesFromFormData(formData: FormData): Array<{
  * @param thumb - The thumbnail file (not used, kept for signature compatibility)
  * @param projectId - The project ID (not used, kept for signature compatibility)
  * @param index - The image index (not used, kept for signature compatibility)
+ * @param confidenceThreshold - Minimum confidence threshold for helmet detection (0-1)
  * @returns Array of detected persons with helmet information
  */
 async function detectHelmetInImage(
   image: File,
   _thumb: File,
   _projectId: number,
-  _index: number
+  _index: number,
+  confidenceThreshold: number
 ): Promise<
   Array<{
     personID: number;
@@ -214,14 +220,36 @@ async function detectHelmetInImage(
       return [];
     }
 
-    const people = response.persons.map((person: GeminiPerson) => ({
-      personID: person.person_id,
-      personConfidence: person.personConfidence / 100, // Convert from 0-100 to 0-1
-      helmetConfidence: person.helmetConfidence / 100, // Convert from 0-100 to 0-1
-      hasHelmet: person.hasHelmet,
-      personBox: person.personBox,
-      helmetBox: person.helmetBox,
-    }));
+    const people = response.persons.map((person: GeminiPerson) => {
+      const helmetConfidence = person.helmetConfidence / 100; // Convert from 0-100 to 0-1
+
+      // Apply confidence threshold: if helmet confidence is below threshold,
+      // consider it as no helmet detected
+      const wasHelmetDetected = person.hasHelmet;
+      const hasHelmet =
+        wasHelmetDetected && helmetConfidence >= confidenceThreshold;
+      const helmetBox = hasHelmet ? person.helmetBox : null;
+
+      // Log if confidence threshold filtered out a helmet
+      if (wasHelmetDetected && !hasHelmet) {
+        console.log(
+          `[CONFIDENCE] Person ${person.person_id} helmet confidence ${(
+            helmetConfidence * 100
+          ).toFixed(1)}% below threshold ${(confidenceThreshold * 100).toFixed(
+            1
+          )}% - marked as no helmet`
+        );
+      }
+
+      return {
+        personID: person.person_id,
+        personConfidence: person.personConfidence / 100,
+        helmetConfidence: helmetConfidence,
+        hasHelmet: hasHelmet,
+        personBox: person.personBox,
+        helmetBox: helmetBox,
+      };
+    });
 
     return people;
   } catch (error) {
@@ -258,7 +286,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[API] Processing ${images.length} image(s)`);
+    console.log(
+      `[API] Processing ${images.length} image(s) with confidence threshold: ${(
+        settings.confidence * 100
+      ).toFixed(1)}%`
+    );
 
     // Create project
     const projectName = generateProjectName(settings.projectTag);
@@ -320,7 +352,8 @@ export async function POST(request: NextRequest) {
               imageData.image,
               imageData.thumb,
               projectId,
-              index
+              index,
+              settings.confidence
             ),
           ]);
 
