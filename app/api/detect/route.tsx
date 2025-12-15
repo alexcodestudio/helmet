@@ -33,7 +33,7 @@ export async function requestGem(
   filename: string
 ) {
   try {
-    const modelName = "gemini-2.5-flash";
+    const modelName = "gemini-2.5-flash-lite";
     const prompt = `
         IMPORTANT: You are a safety compliance expert. You are tasked with analyzing images for safety compliance.
         IMPORTANT: You need to provide coordinates of objects in the image for further processing and they must be  very accurate 

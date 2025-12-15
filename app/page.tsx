@@ -1142,7 +1142,7 @@ export default function Home() {
                                   {/* Thumbnail */}
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
-                                    src={`/images/${img.thumbFileName}`}
+                                    src={`/api/images/${img.thumbFileName}`}
                                     alt={img.fileName}
                                     className="h-16 w-16 rounded object-contain bg-gray-100"
                                   />
@@ -1241,7 +1241,7 @@ export default function Home() {
                 <div className="relative inline-block border border-gray-200 rounded-lg p-2 bg-gray-50">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={`/images/${selectedProjectImage.image.fileName}`}
+                    src={`/api/images/${selectedProjectImage.image.fileName}`}
                     alt={selectedProjectImage.image.fileName}
                     className="max-w-full max-h-[70vh] w-auto h-auto rounded-lg object-contain"
                     id="detection-image"
